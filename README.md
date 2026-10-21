@@ -1,5 +1,9 @@
 # dsh-alicoupon
 
+[![CI](https://github.com/yangguozhongmax-max/dsh-alicoupon/actions/workflows/ci.yml/badge.svg)](https://github.com/yangguozhongmax-max/dsh-alicoupon/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/yangguozhongmax-max/dsh-alicoupon?label=release)](https://github.com/yangguozhongmax-max/dsh-alicoupon/releases)
+[![license](https://img.shields.io/github/license/yangguozhongmax-max/dsh-alicoupon)](LICENSE)
+
 在 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）的侧边栏底部，和 cost-meter 的余额行并排显示**阿里云代金券剩余额度**。
 
 ```
@@ -13,6 +17,52 @@
 - 宿主半边每 `refreshMinutes`（默认 1 分钟）重查一次；浏览器半边每 60 秒读一次宿主快照，页面重新可见 / 窗口聚焦时各读一次。
 - 点那一行打开**配置面板**：改标签、改刷新间隔（落盘、立即生效）、立即刷新、**直接填/清除阿里云 AccessKey**
   （交给宿主写进 DSH 凭据库），以及看凭据每一项的状态。
+
+## 别人下载后能直接用吗？
+
+**代码装上就能跑，但「有数据」需要你自己的阿里云 AccessKey** —— 它查的是**你这个账号**名下的券，
+不是公共数据。不需要登录 DSH 账号，也不需要 GitHub 账号；除了 `business.aliyuncs.com`，插件不连任何服务器。
+
+| 你需要 | 说明 | 不需要 |
+| --- | --- | --- |
+| DSH 0.2.x（桌面 App 或 `dsh web`） | 插件分宿主 / 侧边栏两半 | — |
+| Node ≥ 20.10 | 宿主半边用内置 `fetch`，**零依赖、不用 build** | npm 全局安装 |
+| 一个**能看到那张券的**阿里云账号 | 券跟着账号走，换个账号就查不到 | 阿里云控制台密码、MFA、登录态、OAuth |
+| 一个**只读** AccessKey（RAM 用户） | 权限只要 `bss:DescribeCoupon` | 任何写权限 |
+
+### 五步装好（大约 5 分钟）
+
+```bash
+# 1. 拿代码（二选一）
+git clone https://github.com/yangguozhongmax-max/dsh-alicoupon.git
+npm install github:yangguozhongmax-max/dsh-alicoupon   # 装进任意目录也行，脚本按包目录找 profile
+
+# 2. 挂进 DSH profile（幂等；--dry 先看，--unlink 撤销）
+cd dsh-alicoupon && node scripts/link-into-profile.mjs desktop
+```
+
+3. **建只读 AccessKey**：阿里云控制台 → 访问控制 RAM → 用户 → 创建用户 → 访问方式只勾
+   「使用永久 AccessKey 访问」→ 授权 `AliyunBSSReadOnlyAccess`（省事）或下面这条最小策略：
+   ```json
+   { "Version": "1", "Statement": [{ "Effect": "Allow", "Action": ["bss:DescribeCoupon"], "Resource": "*" }] }
+   ```
+   ID / Secret **只在创建时显示一次**，记下来。
+4. **填凭据**（三选一，都不用重启）：点侧边栏那一行在面板里填 / 写
+   `~/.dsh/.credentials.yaml` 的 `refs:` / 设环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID` 与
+   `ALIBABA_CLOUD_ACCESS_KEY_SECRET`。
+5. **重启 App**（宿主模块只在启动时 import），侧边栏就会出现那一行。体检：
+   ```bash
+   node scripts/doctor.mjs --port 50989   # 端口看 DSH 界面地址
+   ```
+
+### 没配好会看到什么
+
+| 看到 | 含义 | 怎么办 |
+| --- | --- | --- |
+| `阿里云代金券 · 待配置` | 没读到 AK | 面板里填，或检查 `refs:` 键名 / 环境变量 |
+| `阿里云代金券 · 查询失败` | AK 错、被删、或没授权 | 悬停看阿里云原话：`InvalidAccessKeyId` / `Forbidden`（缺 `bss:DescribeCoupon`） |
+| `¥0.00` | AK 正常，但这个账号名下没有可用券 | 换**持有券的那个账号**的 AK |
+| 侧边栏一行都没有 | 插件没挂上 / 客户端没注册 | 先跑 `doctor.mjs`，再看 `~/.dsh/storages/dsh-alicoupon/client.log` |
 
 ## 它怎么工作
 
@@ -30,7 +80,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 准备：一个只读的阿里云 AccessKey
+## 准备：一个只读的阿里云 AccessKey（上面第 3 步的详细版）
 
 1. 在**能看到那张券的阿里云账号**里进「访问控制 RAM → 用户 → 创建用户」。
 2. 访问方式**只勾「使用永久 AccessKey 访问」**（不要勾"控制台访问"，那是给人登录网页用的，还要密码 + MFA）。
@@ -54,36 +104,41 @@
 > 凭据名可以在配置里改（见下）。`refs:` 的键名必须正好等于环境变量名。
 > 注意：**被环境变量遮蔽的 ref 是只读的**，面板改不动它。
 
-## 安装
+## 安装（三种方式，任选其一）
 
-### Web profile（`dsh web` / 浏览器界面）
+> 只想快点用上：照上面「五步装好」做就行。这一节是三种安装方式的全集。
+
+### 用仓库自带的脚本（推荐，幂等，两个 profile 都能用）
 
 ```bash
-# 本地目录
-dsh plugin --profile web add /path/to/dsh-alicoupon
-# 或从 GitHub
-dsh plugin --profile web add github:yangguozhongmax-max/dsh-alicoupon
+node scripts/link-into-profile.mjs                    # 默认 desktop
+node scripts/link-into-profile.mjs web                 # 指定 profile
+node scripts/link-into-profile.mjs desktop --copy      # 没权限建联结时改成复制
+node scripts/link-into-profile.mjs desktop --dry       # 只看会做什么
+node scripts/link-into-profile.mjs desktop --unlink    # 撤掉
 ```
 
-`dsh plugin add` 会把包名写进该 profile 的 `dsh.profile.bundles`，包自带的 `cordis.patch.yml` 负责把这一行插进插件树。
+它做两件事：把本包联到 `<profile>/node_modules/dsh-alicoupon`（Windows 用目录联接，免管理员；
+Unix 用符号链接），并把 `"dsh-alicoupon"` 追加进 `<profile>/package.json` 的 `dsh.profile.bundles`
+（改前备份 `package.json.dsh-alicoupon.bak`）。包自带的 `cordis.patch.yml` 负责把那一行插进插件树。
+
+### Web profile（`dsh web`）：也可以走 CLI
+
+如果 `dsh` 在你的 PATH 上（`dsh plugin --help` 能列出 `add`）：
+
+```bash
+dsh plugin --profile web add github:yangguozhongmax-max/dsh-alicoupon
+dsh plugin --profile web add /path/to/dsh-alicoupon      # 本地目录
+```
+
+它内部用 pnpm 装包，并把包名写进该 profile 的 `dsh.profile.bundles`。
 
 ### 桌面 App（Electron）
 
-桌面 profile 由 App 独占，`dsh --profile desktop` 会被 CLI 拒绝。两种办法：
+桌面 profile 由 App 独占，CLI 会拒绝 `dsh --profile desktop`。三种办法：
 
-1. **App 内安装**：设置 → 插件（Plugins）里安装本包。
-2. **用仓库自带的脚本挂载**（推荐，幂等）：
-
-   ```bash
-   node scripts/link-into-profile.mjs            # 默认 desktop，目录联接（Windows 免管理员）
-   node scripts/link-into-profile.mjs web        # 指定 profile
-   node scripts/link-into-profile.mjs desktop --copy     # 没权限建联接时改成复制
-   node scripts/link-into-profile.mjs desktop --dry      # 先看会做什么
-   node scripts/link-into-profile.mjs desktop --unlink   # 撤掉
-   ```
-
-   它做两件事：把本包联到 `<profile>/node_modules/dsh-alicoupon`，并把 `"dsh-alicoupon"`
-   追加进 `<profile>/package.json` 的 `dsh.profile.bundles`（改前备份 `package.json.dsh-alicoupon.bak`）。
+1. **App 内安装**：设置 → 插件（Plugins）里安装本包（需要它能解析到包，本地目录/仓库都行）。
+2. **用上面的脚本挂载**（推荐）：`node scripts/link-into-profile.mjs desktop`。
 3. **纯手工**：等价于上面两步——放包 + 改 `dsh.profile.bundles`。
 
 三种办法之后都要**重启 App**：热重载不会重新 import 已经加载过的宿主模块。
@@ -207,7 +262,7 @@ node scripts/probe.mjs <AccessKeyId> <AccessKeySecret> [SecurityToken] [--raw] [
 ## 开发与测试
 
 ```bash
-npm test    # 38 个用例，全部离线、零依赖
+npm test    # 42 个用例，全部离线、零依赖
 npm run check
 npm run doctor
 ```
@@ -248,6 +303,10 @@ console.log(summarizeCoupons(result, { label: '阿里云代金券' }))
 ## English quick start
 
 A DSH plugin that shows your Alibaba Cloud coupon balance in the sidebar footer.
+
+**You do not log in anywhere.** The plugin holds one read-only Alibaba Cloud AccessKey in the local
+DSH credential store and talks to `business.aliyuncs.com` only — no OAuth, no console session, no
+telemetry. Without an AccessKey the row simply says `unconfigured`.
 
 1. Create a RAM user with **permanent AccessKey** only, grant `AliyunBSSReadOnlyAccess` (or just `bss:DescribeCoupon`).
 2. Store the credentials as `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET` in the DSH credential store (or as env vars). Or skip this step and type them into the panel (click the sidebar row) — the host writes them into the DSH credential store for you and immediately re-queries Alibaba Cloud, so a wrong key or a missing permission shows up right there.
