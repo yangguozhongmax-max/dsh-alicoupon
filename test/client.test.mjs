@@ -151,5 +151,88 @@ test('ConfigPanel：内嵌模式渲染出面板与凭据说明（不联网）', 
   assert.ok(tree.includes('侧边栏那一行的标签'), '标签输入框')
   assert.ok(tree.includes('宿主查阿里云的间隔'), '间隔输入框')
   assert.ok(tree.includes('立即刷新'))
-  assert.ok(tree.includes('凭据要写进 DSH 凭据库'), '凭据说明')
+  assert.ok(tree.includes('阿里云凭据（只读 AccessKey 即可）'), '凭据小节')
+  assert.ok(tree.includes('AccessKey ID') && tree.includes('AccessKey Secret'), '凭据输入框')
+  assert.ok(tree.includes('Security Token'), 'STS token 输入框')
+  assert.ok(tree.includes('保存凭据') && tree.includes('清除已保存的凭据'), '凭据按钮')
+  assert.ok(tree.includes('交 DSH 凭据库') || tree.includes('写进 DSH 凭据库'), '凭据说明')
+  assert.ok(tree.includes('留空则不改'), '留空语义写在 placeholder 里')
+})
+
+/** 假 createElement 把子节点放在 `node.children`，不是 `props.children`。 */
+function walkTree(node, visit) {
+  if (node === null || typeof node !== 'object') return
+  if (Array.isArray(node)) {
+    for (const item of node) walkTree(item, visit)
+    return
+  }
+  visit(node)
+  for (const child of node.children ?? []) walkTree(child, visit)
+}
+
+/** 面板里第一个 type=password 的输入框（用来模拟用户敲字）。 */
+function passwordInput(panel) {
+  let found = null
+  walkTree(panel, (node) => {
+    if (found === null && node.type === 'input' && node.props?.type === 'password') found = node
+  })
+  return found
+}
+
+/** 找出文本等于给定字面量的 button。 */
+function buttonByText(panel, text) {
+  let found = null
+  walkTree(panel, (node) => {
+    if (found === null && node.type === 'button' && (node.children ?? []).includes(text)) found = node
+  })
+  return found
+}
+
+test('ConfigPanel：把键入的 AK/Secret POST 给 /credentials，并显示逐项结果', async () => {
+  const { exports } = await loadBundle()
+  const ctx = fakeContext()
+  exports.apply(ctx)
+  const Section = ctx.registered.find((entry) => entry.options.name === 'settings.section').Component
+  const section = Section()
+  const panel = section.type(section.props)
+
+  const requests = []
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url, options })
+    return {
+      status: 200,
+      async json() {
+        return {
+          ok: true,
+          results: [
+            { role: 'accessKeyId', ref: 'ALIBABA_CLOUD_ACCESS_KEY_ID', ok: true, action: 'saved' },
+            { role: 'accessKeySecret', ref: 'ALIBABA_CLOUD_ACCESS_KEY_SECRET', ok: true, action: 'saved' },
+          ],
+          credentials: { configured: true, missing: [], writable: true, refs: [] },
+          state: { status: 'ok', message: '' },
+        }
+      },
+    }
+  }
+  try {
+    // 假 React 不跑 effect，所以「读配置」那一步不会发生；直接驱动输入与按钮。
+    const secret = passwordInput(panel)
+    assert.notEqual(secret, null, '得有个密码输入框')
+    secret.props.onChange({ target: { value: '  sk-test  ' } })
+
+    const save = buttonByText(panel, '保存凭据')
+    assert.notEqual(save, null, '得有「保存凭据」按钮')
+    assert.equal(save.props.disabled, true, '还没读到 /config（不知道能不能写）时先禁用')
+    await save.props.onClick()
+
+    assert.equal(requests.length, 1)
+    assert.ok(requests[0].url.includes('/plugins/dsh-alicoupon/credentials'), requests[0].url)
+    assert.equal(requests[0].options.method, 'POST')
+    const body = JSON.parse(requests[0].options.body)
+    assert.equal(body.securityToken, '', 'Security Token 默认空')
+    assert.equal(body.clear, undefined, '保存时不该带 clear')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })

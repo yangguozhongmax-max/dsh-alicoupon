@@ -11,7 +11,8 @@
 - 只用**只读**接口：阿里云 BSS `DescribeCoupon`（`business.aliyuncs.com`，`2023-09-30`，ACS3-HMAC-SHA256 签名）。
 - 凭据存在 DSH 凭据库里，**永远不回传给浏览器**；接口响应只有余额、面值、张数、到期日。
 - 宿主半边每 `refreshMinutes`（默认 1 分钟）重查一次；浏览器半边每 60 秒读一次宿主快照，页面重新可见 / 窗口聚焦时各读一次。
-- 点那一行打开**配置面板**：改标签、改刷新间隔（落盘、立即生效）、立即刷新、看凭据到底缺哪一项。
+- 点那一行打开**配置面板**：改标签、改刷新间隔（落盘、立即生效）、立即刷新、**直接填/清除阿里云 AccessKey**
+  （交给宿主写进 DSH 凭据库），以及看凭据每一项的状态。
 
 ## 它怎么工作
 
@@ -36,9 +37,9 @@
 4. 给这个用户授权（任选其一）：
    - 省事：`AliyunBSSReadOnlyAccess`（系统策略，含 `bss:Describe*`，覆盖 `DescribeCoupon`）；
    - 最小化：自定义策略，只允许 `bss:DescribeCoupon`。
-5. 把凭据写进 DSH：
+5. 把凭据写进 DSH（任选其一）：
 
-   - **设置界面**：把 AK/Secret 填进任意能写凭据的插件表单；或
+   - **装好本插件后点侧边栏那一行，在面板里填**（最省事：宿主会调用 DSH 凭据服务写进凭据库）；或
    - **凭据库文件** `~/.dsh/.credentials.yaml`：
 
      ```yaml
@@ -50,6 +51,7 @@
    - 或者设成环境变量 `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET`（STS 临时凭据再加 `ALIBABA_CLOUD_SECURITY_TOKEN`）。
 
 > 凭据名可以在配置里改（见下）。`refs:` 的键名必须正好等于环境变量名。
+> 注意：**被环境变量遮蔽的 ref 是只读的**，面板改不动它。
 
 ## 安装
 
@@ -111,8 +113,16 @@ dsh plugin --profile web add github:yangguozhongmax-max/dsh-alicoupon
 { "label": "千问学生券", "refreshMinutes": 1 }
 ```
 
-面板同时会显示**凭据还缺哪一项**。凭据本身不能从浏览器半边改（客户端没有 `credentials.set`），
-只能写 `~/.dsh/.credentials.yaml` 的 `refs:` 或设成环境变量——这是 DSH 的边界，不是本插件的限制。
+面板同时会显示**凭据状态**：每一项的 ref 名、配没配、值来自哪一层（`file` / `env`…）、以及能不能被插件写入。
+凭据可以直接在面板里填：**「保存凭据」走宿主的 `POST /credentials`**，由宿主调用 DSH 凭据服务写进
+`~/.dsh/.credentials.yaml`（等价于手工改 `refs:`），写完**立刻查一次阿里云**，所以键贴错、Secret 不对、
+缺 `bss:DescribeCoupon` 权限都会当场看到阿里云的原话。要点：
+
+- 留空的字段 = 不改；要删掉已保存的值就点「清除已保存的凭据」。
+- 密钥只在请求体里过一遍，不回显（保存后输入框清空），宿主响应里也没有密钥。
+- 如果某个 ref 被环境变量遮蔽（状态显示「来源 env，只读」），凭据服务会拒绝写入——这时改环境变量，或先取消遮蔽。
+- 想完全绕开面板也可以照旧手工改 `refs:` 或设环境变量。
+
 路径可以用环境变量 `DSH_ALICOUPON_CONFIG` 顶掉（测试与多 profile 隔离用）。
 
 如果这个 profile 里 `@deepseek-ai/dsh-client-ui-settings` 是开着的，配置面板也会作为
@@ -153,6 +163,8 @@ node scripts/probe.mjs <AccessKeyId> <AccessKeySecret> [SecurityToken] [--raw] [
 | POST | `/plugins/dsh-alicoupon/refresh` | 强制刷新后返回 |
 | GET | `/plugins/dsh-alicoupon/config` | 生效配置 + 凭据是否就绪 + 落盘路径 |
 | POST | `/plugins/dsh-alicoupon/config` | `{"label":"…","refreshMinutes":n}`，落盘并立即生效；非法字段 400 |
+| GET | `/plugins/dsh-alicoupon/credentials` | 每个 ref 的 `configured` / `source` / `writable`，以及凭据服务支不支持写入 |
+| POST | `/plugins/dsh-alicoupon/credentials` | `{"accessKeyId":"…","accessKeySecret":"…","securityToken":"…"}` 写进凭据库；`{"clear":["accessKeyId"]}` 删除；整条校验不过就 400 且不写 |
 
 `state` / `refresh` 的响应里还带 `config`（生效配置）与 `diagnostics`（`clientHits` / `otherHits` 计数，
 用来判断浏览器那半边到底有没有在轮询）。
@@ -184,7 +196,8 @@ node --check lib/index.js && node --check lib/client.js && node --check lib/aliy
 ```
 
 三个测试文件都是零依赖、离线可跑的：`aliyun-coupon` 测签名/翻页/解析/汇总，`config` 测配置白名单，
-`host` 用**假的 cordis ctx** 驱动真实路由处理器（注册路由 → 无凭据不联网 → 读配置 → 写配置 → 落盘 → 当场生效 → 非法输入被拒），
+`host` 用**假的 cordis ctx** 驱动真实路由处理器（注册路由 → 无凭据不联网 → 读配置 → 写配置 → 落盘 → 当场生效 → 非法输入被拒；
+凭据路由用假凭据库 + 假 fetch：写入后当场查到券、`clear` 后回到未配置、非法输入一个字节都不写），
 `client` 用**假的 React** 渲染那一行与配置面板（验证 bundle 契约、槽位注册、面板字段）。
 `host` / `client` 都不碰阿里云、不需要浏览器，所以 CI 里也安全。
 
@@ -205,7 +218,9 @@ console.log(summarizeCoupons(result, { label: '阿里云代金券' }))
 - `DescribeCoupon` 返回的券对象没有名字字段，所以「一张券 = 一行汇总」：把同一账号下所有可用券的剩余/面值加总，到期日取最近的那个。要挑特定的券，得按 `CouponId` 过滤（还没做）。
 - 这些路由和 DSH 的 Web 服务器一样**不带认证**（DSH 自己的设计：路由各自负责）。`/state` 只读，
   `/config` 也只能改标签和刷新间隔（白名单校验），但如果你把 DSH 的端口暴露到局域网，任何能访问它的
-  本地网页都能改这两个字段、也能看到你的券余额。给它加一层守卫是本插件以后要做的事。
+  本地网页都能改这两个字段、也能看到你的券余额；`POST /credentials` 更敏感——它**只往凭据库里写**
+  （不能读回任何值，响应里只有 ref 名、状态和阿里云那边的结果），但暴露出去就等于让别人能替换你的 AK。
+  所以：别把端口开到局域网，要就要给它加一层守卫（本插件以后要做的事）。
 - 只读，不会动任何阿里云资源。
 
 ## English quick start
@@ -213,9 +228,9 @@ console.log(summarizeCoupons(result, { label: '阿里云代金券' }))
 A DSH plugin that shows your Alibaba Cloud coupon balance in the sidebar footer.
 
 1. Create a RAM user with **permanent AccessKey** only, grant `AliyunBSSReadOnlyAccess` (or just `bss:DescribeCoupon`).
-2. Store the credentials as `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET` in the DSH credential store (or as env vars).
+2. Store the credentials as `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET` in the DSH credential store (or as env vars). Or skip this step and type them into the panel (click the sidebar row) — the host writes them into the DSH credential store for you and immediately re-queries Alibaba Cloud, so a wrong key or a missing permission shows up right there.
 3. Install: `dsh plugin --profile web add github:yangguozhongmax-max/dsh-alicoupon`. Desktop profile: install from the app's Settings → Plugins, or run `node scripts/link-into-profile.mjs` (link + `dsh.profile.bundles` in one idempotent step, `--unlink` to undo), then restart the app — hot reload does not re-import an already-loaded host module.
-4. The host polls `DescribeCoupon` every `refreshMinutes` (default 1) and serves a read-only snapshot at `/plugins/dsh-alicoupon/state`; the browser half renders it next to cost-meter's balance row.
+4. The host polls `DescribeCoupon` every `refreshMinutes` (default 1) and serves a read-only snapshot at `/plugins/dsh-alicoupon/state`; the browser half renders it next to cost-meter's balance row. Click the row to change the label / interval, refresh now, or manage credentials.
 
 ## License
 
