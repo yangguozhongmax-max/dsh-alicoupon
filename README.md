@@ -69,7 +69,21 @@ dsh plugin --profile web add github:yangguozhongmax-max/dsh-alicoupon
 桌面 profile 由 App 独占，`dsh --profile desktop` 会被 CLI 拒绝。两种办法：
 
 1. **App 内安装**：设置 → 插件（Plugins）里安装本包。
-2. **手工挂载**（本地开发常用）：把包放进 `<profile>/node_modules/dsh-alicoupon`（目录联接 / 复制都行），再把 `"dsh-alicoupon"` 追加到 `<profile>/package.json` 的 `dsh.profile.bundles`，然后重启 App。
+2. **用仓库自带的脚本挂载**（推荐，幂等）：
+
+   ```bash
+   node scripts/link-into-profile.mjs            # 默认 desktop，目录联接（Windows 免管理员）
+   node scripts/link-into-profile.mjs web        # 指定 profile
+   node scripts/link-into-profile.mjs desktop --copy     # 没权限建联接时改成复制
+   node scripts/link-into-profile.mjs desktop --dry      # 先看会做什么
+   node scripts/link-into-profile.mjs desktop --unlink   # 撤掉
+   ```
+
+   它做两件事：把本包联到 `<profile>/node_modules/dsh-alicoupon`，并把 `"dsh-alicoupon"`
+   追加进 `<profile>/package.json` 的 `dsh.profile.bundles`（改前备份 `package.json.dsh-alicoupon.bak`）。
+3. **纯手工**：等价于上面两步——放包 + 改 `dsh.profile.bundles`。
+
+三种办法之后都要**重启 App**：热重载不会重新 import 已经加载过的宿主模块。
 
 `<profile>` 通常是 `~/.dsh/profiles/desktop`（桌面 App）或 `~/.dsh/profiles/web`。
 
@@ -170,8 +184,11 @@ node --check lib/index.js && node --check lib/client.js && node --check lib/aliy
 ```
 
 三个测试文件都是零依赖、离线可跑的：`aliyun-coupon` 测签名/翻页/解析/汇总，`config` 测配置白名单，
-`host` 用**假的 cordis ctx** 驱动真实路由处理器（注册路由 → 无凭据不联网 → 读配置 → 写配置 → 落盘 → 当场生效 → 非法输入被拒）。
-`host` 测试全程不碰阿里云，所以 CI 里也安全。
+`host` 用**假的 cordis ctx** 驱动真实路由处理器（注册路由 → 无凭据不联网 → 读配置 → 写配置 → 落盘 → 当场生效 → 非法输入被拒），
+`client` 用**假的 React** 渲染那一行与配置面板（验证 bundle 契约、槽位注册、面板字段）。
+`host` / `client` 都不碰阿里云、不需要浏览器，所以 CI 里也安全。
+
+`scripts/link-into-profile.mjs` 也属于可跑的脚本：`--dry` 不写盘，可以直接拿来检查挂载状态。
 
 `lib/aliyun-coupon.js` 是零依赖的纯核心（签名 / 请求 / 解析 / 汇总），可以单独复用：
 
@@ -197,7 +214,7 @@ A DSH plugin that shows your Alibaba Cloud coupon balance in the sidebar footer.
 
 1. Create a RAM user with **permanent AccessKey** only, grant `AliyunBSSReadOnlyAccess` (or just `bss:DescribeCoupon`).
 2. Store the credentials as `ALIBABA_CLOUD_ACCESS_KEY_ID` / `ALIBABA_CLOUD_ACCESS_KEY_SECRET` in the DSH credential store (or as env vars).
-3. Install: `dsh plugin --profile web add github:yangguozhongmax-max/dsh-alicoupon` (desktop profile: install from the app's Settings → Plugins, or link the package into `<profile>/node_modules` and add it to `dsh.profile.bundles`).
+3. Install: `dsh plugin --profile web add github:yangguozhongmax-max/dsh-alicoupon`. Desktop profile: install from the app's Settings → Plugins, or run `node scripts/link-into-profile.mjs` (link + `dsh.profile.bundles` in one idempotent step, `--unlink` to undo), then restart the app — hot reload does not re-import an already-loaded host module.
 4. The host polls `DescribeCoupon` every `refreshMinutes` (default 1) and serves a read-only snapshot at `/plugins/dsh-alicoupon/state`; the browser half renders it next to cost-meter's balance row.
 
 ## License
