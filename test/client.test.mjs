@@ -4,10 +4,12 @@
  * 用假的 `window.__ModuleLoader__` 把 bundle 取出来，用极简的假 React 渲染一次
  * （真正的 React 只在 App 里才有），验证三件事：
  *   1. bundle 的对外契约（`inject` / `apply`）没坏；
- *   2. 侧边栏那行会注册进 `sidebar.footer.action`，设置那一节注册失败也不会带走它；
+ *   2. 侧边栏那行会注册进 `sidebar.footer.action`，`apply` 同步返回 undefined 且绝不抛错
+ *      （fiber 一旦停在 loading，桌面 App 就会拒绝启动：`web boot: 1 entry did not activate`）；
  *   3. 渲染出来的树里确实有那一行（标签 + 余额）。
  */
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { test } from 'node:test'
 
 /** 只实现 client.js 用到的那几个 hook；effect 不执行（fetch 留着给浏览器跑）。 */
@@ -101,40 +103,47 @@ test('bundle 契约：id / apply 都在，且不把 slots 声明成强依赖', a
   assert.equal(typeof exports.apply, 'function')
 })
 
-test('apply：注册侧边栏那一行（id/order/槽位都对）', async () => {
+test('apply：只注册侧边栏那一行（id/order 都对，不多注册槽位）', async () => {
   const { exports } = await loadBundle()
   const ctx = fakeContext()
-  exports.apply(ctx)
+  // 同步返回 undefined 是关键契约：返回 thenable 会让 fiber 一直停在 loading。
+  assert.equal(exports.apply(ctx), undefined)
   const row = ctx.registered.find((entry) => entry.options.name === 'sidebar.footer.action')
   assert.notEqual(row, undefined, '应当注册 sidebar.footer.action')
   assert.equal(row.options.id, 'dsh-alicoupon')
   assert.equal(row.options.order, -1)
-  const section = ctx.registered.find((entry) => entry.options.name === 'settings.section')
-  assert.notEqual(section, undefined, '顺带注册 settings.section')
-  assert.equal(section.options.label, '阿里云代金券')
+  assert.deepEqual(
+    ctx.registered.map((entry) => entry.options.name),
+    ['sidebar.footer.action'],
+    '侧边栏只该有这一行：不要再往 settings.section 里塞一份',
+  )
 })
 
 test('slots 服务迟到：apply 不抛错，服务到位后再注册（启动审计不会看到 loading）', async () => {
   const { exports } = await loadBundle()
   const ctx = fakeContext({ deferSlots: true })
-  exports.apply(ctx)
+  assert.equal(exports.apply(ctx), undefined)
   assert.deepEqual(ctx.registered, [], '服务没到位时不应该注册')
   assert.equal(ctx.pending.length, 1, '应当挂起一次 ctx.inject 回调')
   ctx.pending[0]()
   assert.deepEqual(
     ctx.registered.map((entry) => entry.options.name),
-    ['sidebar.footer.action', 'settings.section'],
+    ['sidebar.footer.action'],
   )
 })
 
-test('设置弹窗不可用时，注册失败不会带走侧边栏那一行', async () => {
+test('注册抛错时 apply 也不抛（否则条目变 failed，App 一样起不来）', async () => {
   const { exports } = await loadBundle()
-  const ctx = fakeContext({ throwOn: 'settings.section' })
-  exports.apply(ctx)
-  assert.deepEqual(
-    ctx.registered.map((entry) => entry.options.name),
-    ['sidebar.footer.action'],
-  )
+  const ctx = fakeContext({ throwOn: 'sidebar.footer.action' })
+  assert.equal(exports.apply(ctx), undefined)
+  assert.deepEqual(ctx.registered, [])
+})
+
+test('manifest：dsh.client.immediately 必须是 true（启动时先预取，条目才不会卡在 loading）', async () => {
+  const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.equal(manifest.dsh.client.platform, 'web')
+  assert.equal(manifest.dsh.client.immediately, true)
+  assert.equal(manifest.dsh.bundle.patch, './cordis.patch.yml')
 })
 
 test('CouponRow：宽模式渲染「标签 + 余额」，导轨模式渲染金额', async () => {
@@ -160,13 +169,7 @@ test('CouponRow：宽模式渲染「标签 + 余额」，导轨模式渲染金�
 
 test('ConfigPanel：内嵌模式渲染出面板与凭据说明（不联网）', async () => {
   const { exports } = await loadBundle()
-  const ctx = fakeContext()
-  exports.apply(ctx)
-  const Section = ctx.registered.find((entry) => entry.options.name === 'settings.section').Component
-
-  // SettingsSection 返回的是「元素」，真正的组件在 type 上（假 React 不做渲染）。
-  const section = Section()
-  const panel = section.type(section.props)
+  const panel = exports.__components.ConfigPanel({ embedded: true })
   const root = findByClass(panel, 'dsa-panel')
   assert.notEqual(root, null, '面板根节点')
   assert.equal(root.props['data-embedded'], 'true')
@@ -216,11 +219,7 @@ function buttonByText(panel, text) {
 
 test('ConfigPanel：把键入的 AK/Secret POST 给 /credentials，并显示逐项结果', async () => {
   const { exports } = await loadBundle()
-  const ctx = fakeContext()
-  exports.apply(ctx)
-  const Section = ctx.registered.find((entry) => entry.options.name === 'settings.section').Component
-  const section = Section()
-  const panel = section.type(section.props)
+  const panel = exports.__components.ConfigPanel({ embedded: true })
 
   const requests = []
   const originalFetch = globalThis.fetch

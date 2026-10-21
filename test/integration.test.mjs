@@ -362,17 +362,14 @@ test('集成：面板写凭据 → 真实宿主落库 + 立刻查阿里云 → �
   const registered = []
   const { exports, react } = await loadClient()
   exports.apply(clientContext(registered))
-  const Section = registered.find((entry) => entry.options.name === 'settings.section').Component
+  const Panel = exports.__components.ConfigPanel
   const Row = registered.find((entry) => entry.options.name === 'sidebar.footer.action').Component
 
   const originalFetch = globalThis.fetch
   globalThis.fetch = bridgeFetch
   try {
-    // 面板从真实 `/config` 读状态（`Section()` 返回元素，真组件在 `type` 上）。
-    react.mount('panel', () => {
-      const element = Section()
-      return element.type(element.props)
-    })
+    // 面板从真实 `/config` 读状态。
+    react.mount('panel', () => Panel({ embedded: true }))
     await react.flush()
     let root = findByClass(react.tree('panel'), 'dsa-panel')
     assert.notEqual(root, null, '面板应当渲染出来')

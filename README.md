@@ -125,8 +125,8 @@ dsh plugin --profile web add github:yangguozhongmax-max/dsh-alicoupon
 
 路径可以用环境变量 `DSH_ALICOUPON_CONFIG` 顶掉（测试与多 profile 隔离用）。
 
-如果这个 profile 里 `@deepseek-ai/dsh-client-ui-settings` 是开着的，配置面板也会作为
-`settings.section` 出现在设置弹窗里；桌面 App 默认把它关了，所以那里只能从侧边栏那一行点开。
+侧边栏只注册**一行**（点它开面板）。本包不注册 `settings.section`：桌面 App 的 profile 默认把
+`@deepseek-ai/dsh-client-ui-settings` 关掉了（`enabled: false`），塞进去只是多一个启动期失败点。
 
 ## 排错
 
@@ -160,6 +160,7 @@ node scripts/probe.mjs <AccessKeyId> <AccessKeySecret> [SecurityToken] [--raw] [
 | 行显示「· 查询失败」 | 悬停看具体原因：`InvalidAccessKeyId`（AK 错/已删）、`Forbidden`（没授权 `bss:DescribeCoupon`）、HTTP 4xx/5xx |
 | 数字不更新 | 点那一行打开面板看「更新于」；interval 太大就调小；宿主定时器只在插件进程活着时跑 |
 | 路由 404 | 宿主半边没加载：检查包名是否在 `dsh.profile.bundles`、日志里有没有插件报错 |
+| App 起不来，报 `web boot: 1 entry did not activate` | 有客户端条目没跑到 active。崩溃日志在 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*-web-boot.log`，能直接看到 `<包名>: loading`。本包 0.1.1 起这样修：`dsh.client.immediately: true`（启动期先预取模块）+ 只在 `ctx.inject(['slots'], …)` 里注册槽位（插件自身立刻 active，服务晚到不影响启动）+ `apply` 同步返回 `undefined`、永不抛错。升级后仍然要重启 App |
 | 改了 `lib/index.js` 但行为没变 | **热重载不会重新 import 已经加载过的宿主模块**——必须重启 App（或重启 `dsh web`）；改客户端 `lib/client.js` 同样要重开界面（桌面 App 的界面走 `dsh-app://`，F5 不重载） |
 
 宿主日志：DSH 主进程 stdout；桌面 App 的渲染进程日志（只在启动失败时写）在 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\`。
