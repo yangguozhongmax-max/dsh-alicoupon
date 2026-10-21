@@ -203,6 +203,18 @@ test('未知路径 404，错方法 405', async () => {
   assert.equal((await call('PUT', `${ROUTE_PREFIX}/config`, { label: 'x' })).statusCode, 405)
 })
 
+test('OPTIONS 预检放行：跨源页面里的 JSON POST 才不会被浏览器拦掉', async () => {
+  const res = await call('OPTIONS', `${ROUTE_PREFIX}/config`)
+  assert.equal(res.statusCode, 204)
+  assert.equal(res.headers['access-control-allow-origin'], '*')
+  assert.ok(res.headers['access-control-allow-methods'].includes('POST'), '得允许 POST')
+  assert.ok(res.headers['access-control-allow-headers'].includes('content-type'), '得允许 JSON 的 content-type')
+
+  const credentials = await call('OPTIONS', `${ROUTE_PREFIX}/credentials`)
+  assert.equal(credentials.statusCode, 204, '凭据路由的预检也要放行')
+  assert.ok(credentials.headers['access-control-allow-methods'].includes('POST'))
+})
+
 test('GET /credentials：逐项报「配没配、从哪来、能不能写」', async () => {
   const body = json(await call('GET', `${ROUTE_PREFIX}/credentials`))
   assert.equal(body.ok, true)

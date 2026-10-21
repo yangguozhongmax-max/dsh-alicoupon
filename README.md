@@ -166,6 +166,8 @@ node scripts/probe.mjs <AccessKeyId> <AccessKeySecret> [SecurityToken] [--raw] [
 | GET | `/plugins/dsh-alicoupon/credentials` | 每个 ref 的 `configured` / `source` / `writable`，以及凭据服务支不支持写入 |
 | POST | `/plugins/dsh-alicoupon/credentials` | `{"accessKeyId":"…","accessKeySecret":"…","securityToken":"…"}` 写进凭据库；`{"clear":["accessKeyId"]}` 删除；整条校验不过就 400 且不写 |
 
+所有路由都处理 `OPTIONS` 预检（浏览器半边跟宿主不同源，JSON `POST` 会先发预检）。
+
 `state` / `refresh` 的响应里还带 `config`（生效配置）与 `diagnostics`（`clientHits` / `otherHits` 计数，
 用来判断浏览器那半边到底有没有在轮询）。
 
