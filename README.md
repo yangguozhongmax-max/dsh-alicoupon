@@ -24,7 +24,8 @@
 │  → 只读 HTTP 路由 /plugins/dsh-alicoupon/state | /refresh    │
 └─────────────────────────────────────────────────────────────┘
 ┌─ 浏览器（lib/client.js） ───────────────────────────────────┐
-│  ctx.slots.register({name:'sidebar.footer.action', …})      │
+│  ctx.get('slots').inject('sidebar.footer.action',             │
+│      () => slots.register({name:'sidebar.footer.action', …})) │
 │  每 60s GET 一次 state 路由 → 渲染「标签 + 余额」             │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -160,7 +161,8 @@ node scripts/probe.mjs <AccessKeyId> <AccessKeySecret> [SecurityToken] [--raw] [
 | 行显示「· 查询失败」 | 悬停看具体原因：`InvalidAccessKeyId`（AK 错/已删）、`Forbidden`（没授权 `bss:DescribeCoupon`）、HTTP 4xx/5xx |
 | 数字不更新 | 点那一行打开面板看「更新于」；interval 太大就调小；宿主定时器只在插件进程活着时跑 |
 | 路由 404 | 宿主半边没加载：检查包名是否在 `dsh.profile.bundles`、日志里有没有插件报错 |
-| App 起不来，报 `web boot: 1 entry did not activate` | 有客户端条目没跑到 active。崩溃日志在 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*-web-boot.log`，能直接看到 `<包名>: loading`。本包 0.1.1 起这样修：`dsh.client.immediately: true`（启动期先预取模块）+ 只在 `ctx.inject(['slots'], …)` 里注册槽位（插件自身立刻 active，服务晚到不影响启动）+ `apply` 同步返回 `undefined`、永不抛错。升级后仍然要重启 App |
+| 侧边栏一行都不出现，App 也没报错 | 先看 `~/.dsh/storages/dsh-alicoupon/client.log`（浏览器半边会往宿主发自检信标，也汇总在 `/state` 的 `diagnostics.clientLog` 里）。0.1.3 之前最常见的死因是 `cannot get property "slots" without inject`：不声明 `inject` 时 cordis 的 ctx 代理拒绝读 `ctx.slots`，注册就静默失败了。现在改成 `ctx.get('slots')`（不触发守卫）拿服务，再用 `slots.inject(name, () => slots.register(…))` 注册 |
+| App 起不来，报 `web boot: 1 entry did not activate` | 有客户端条目没跑到 active。崩溃日志在 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*-web-boot.log`，能直接看到 `<包名>: loading`。本包 0.1.1 起这样修：`dsh.client.immediately: true`（启动期先预取模块）+ 不在插件自身声明 `slots` 强依赖（插件立刻 active，服务晚到不影响启动）+ `apply` 同步返回 `undefined`、永不抛错。升级后仍然要重启 App |
 | 改了 `lib/index.js` 但行为没变 | **热重载不会重新 import 已经加载过的宿主模块**——必须重启 App（或重启 `dsh web`）；改客户端 `lib/client.js` 同样要重开界面（桌面 App 的界面走 `dsh-app://`，F5 不重载） |
 
 宿主日志：DSH 主进程 stdout；桌面 App 的渲染进程日志（只在启动失败时写）在 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\`。

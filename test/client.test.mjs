@@ -134,6 +134,31 @@ test('slots 服务迟到：apply 立刻返回 undefined，服务到位后自己�
   )
 })
 
+test('真实 cordis 语义：ctx.slots 被 inject 守卫拦住，必须走 ctx.get("slots")', async () => {
+  const { exports } = await loadBundle()
+  const registered = []
+  const slots = makeSlots(registered)
+  const ctx = {
+    registered,
+    effect: (fn) => {
+      const dispose = fn()
+      return typeof dispose === 'function' ? dispose : () => {}
+    },
+    get: (name) => (name === 'slots' ? slots : undefined),
+  }
+  // 桌面 App 里真实发生过的报错：apply 碰 ctx.slots 就被守卫拦下，整行注册静默失败。
+  Object.defineProperty(ctx, 'slots', {
+    get() {
+      throw new Error('cannot get property "slots" without inject')
+    },
+  })
+  assert.equal(exports.apply(ctx), undefined)
+  assert.deepEqual(
+    registered.map((entry) => entry.options.name),
+    ['sidebar.footer.action'],
+  )
+})
+
 test('注册抛错时 apply 也不抛（否则条目变 failed，App 一样起不来）', async () => {
   const { exports } = await loadBundle()
   const ctx = fakeContext({ throwOn: 'sidebar.footer.action' })
