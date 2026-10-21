@@ -1,0 +1,5 @@
+# dsh bundle patch：把本插件插进 profile 的 layer stack。
+# 行名（name）由 profile 自己的 node_modules 解析，所以这里只写包名。
+- insert:
+    - id: alicoupon
+      name: 'dsh-alicoupon'

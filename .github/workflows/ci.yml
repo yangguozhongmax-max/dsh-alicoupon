@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      # 插件本体没有任何运行时依赖，所以不需要 npm install 就能跑测试。
+      - name: Run unit tests
+        run: node --test test/aliyun-coupon.test.mjs
+      - name: Check the host and client entries parse
+        run: |
+          node --check lib/aliyun-coupon.js
+          node --check lib/index.js
+          node --check lib/client.js

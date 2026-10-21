@@ -1,0 +1,60 @@
+{
+  "name": "dsh-alicoupon",
+  "version": "0.1.0",
+  "description": "在 DeepSeek Harness 侧边栏显示阿里云代金券剩余额度（只读 DescribeCoupon）· Alibaba Cloud coupon balance row for DSH",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "aliyun",
+    "alicloud",
+    "coupon",
+    "quota",
+    "sidebar"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yangguozhongmax-max/dsh-alicoupon.git"
+  },
+  "homepage": "https://github.com/yangguozhongmax-max/dsh-alicoupon#readme",
+  "bugs": {
+    "url": "https://github.com/yangguozhongmax-max/dsh-alicoupon/issues"
+  },
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "probe": "node scripts/probe.mjs",
+    "test": "node --test test/aliyun-coupon.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./aliyun-coupon": "./lib/aliyun-coupon.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "scripts",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  }
+}
