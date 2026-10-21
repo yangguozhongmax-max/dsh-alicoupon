@@ -1,0 +1,155 @@
+/**
+ * 客户端半边的离线冒烟测试：不需要浏览器、不需要 DSH、不联网。
+ *
+ * 用假的 `window.__ModuleLoader__` 把 bundle 取出来，用极简的假 React 渲染一次
+ * （真正的 React 只在 App 里才有），验证三件事：
+ *   1. bundle 的对外契约（`inject` / `apply`）没坏；
+ *   2. 侧边栏那行会注册进 `sidebar.footer.action`，设置那一节注册失败也不会带走它；
+ *   3. 渲染出来的树里确实有那一行（标签 + 余额）。
+ */
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+
+/** 只实现 client.js 用到的那几个 hook；effect 不执行（fetch 留着给浏览器跑）。 */
+function fakeReact() {
+  const createElement = (type, props, ...children) => ({
+    type,
+    props: props ?? {},
+    children: children.flat().filter((child) => child !== null && child !== undefined && child !== false),
+  })
+  return {
+    createElement,
+    Fragment: Symbol('Fragment'),
+    useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+    useEffect: () => {},
+    useCallback: (fn) => fn,
+    useRef: (initial) => ({ current: initial }),
+  }
+}
+
+const PRIMITIVES = '@deepseek-ai/dsh-client-ui-primitives'
+
+/** 把 bundle 载进来：捕获 `__ModuleLoader__.load({id, factory})`，再手工物化一次。 */
+async function loadBundle() {
+  const captured = []
+  globalThis.window = { __ModuleLoader__: { load: (spec) => captured.push(spec) } }
+  const url = new URL('../lib/client.js', import.meta.url)
+  // client.js 是给「压缩过的模块系统」看的死代码，直接 import 就是执行那句 load。
+  await import(`${url.href}?smoke=${Date.now()}`)
+  assert.equal(captured.length, 1, '应当正好调用一次 __ModuleLoader__.load')
+  const spec = captured[0]
+  assert.equal(spec.id, 'dsh-alicoupon')
+  const React = fakeReact()
+  const exports = spec.factory((id) => {
+    if (id === 'react') return React
+    if (id === PRIMITIVES) return { Tooltip: null }
+    // 故意让 react-dom 拿不到：走「没有 portal 就内联渲染」的兜底分支。
+    throw new Error(`测试里不该 require(${id})`)
+  })
+  delete globalThis.window
+  return { spec, exports, React }
+}
+
+/** 在假的元素树里按 className 找节点（假 createElement 不做渲染，得自己走）。 */
+function findByClass(node, className) {
+  if (node === null || typeof node !== 'object') return null
+  if (node.props?.className === className) return node
+  for (const child of node.children ?? []) {
+    const hit = findByClass(child, className)
+    if (hit !== null) return hit
+  }
+  return null
+}
+
+function fakeContext({ throwOn } = {}) {
+  const registered = []
+  return {
+    registered,
+    slots: {
+      inject: (_name, callback) => callback(),
+      register: (options, Component) => {
+        if (throwOn !== undefined && options.name === throwOn) throw new Error(`slot ${options.name} 不可用`)
+        registered.push({ options, Component })
+        return () => {}
+      },
+    },
+    effect: (fn, _label) => {
+      const dispose = fn()
+      return typeof dispose === 'function' ? dispose : () => {}
+    },
+  }
+}
+
+test('bundle 契约：id / inject / apply 都在', async () => {
+  const { spec, exports } = await loadBundle()
+  assert.equal(spec.id, 'dsh-alicoupon')
+  assert.equal(exports.name, 'dsh-alicoupon')
+  assert.deepEqual(exports.inject, ['slots'])
+  assert.equal(typeof exports.apply, 'function')
+})
+
+test('apply：注册侧边栏那一行（id/order/槽位都对）', async () => {
+  const { exports } = await loadBundle()
+  const ctx = fakeContext()
+  exports.apply(ctx)
+  const row = ctx.registered.find((entry) => entry.options.name === 'sidebar.footer.action')
+  assert.notEqual(row, undefined, '应当注册 sidebar.footer.action')
+  assert.equal(row.options.id, 'dsh-alicoupon')
+  assert.equal(row.options.order, -1)
+  const section = ctx.registered.find((entry) => entry.options.name === 'settings.section')
+  assert.notEqual(section, undefined, '顺带注册 settings.section')
+  assert.equal(section.options.label, '阿里云代金券')
+})
+
+test('设置弹窗不可用时，注册失败不会带走侧边栏那一行', async () => {
+  const { exports } = await loadBundle()
+  const ctx = fakeContext({ throwOn: 'settings.section' })
+  exports.apply(ctx)
+  assert.deepEqual(
+    ctx.registered.map((entry) => entry.options.name),
+    ['sidebar.footer.action'],
+  )
+})
+
+test('CouponRow：宽模式渲染「标签 + 余额」，导轨模式渲染金额', async () => {
+  const { exports } = await loadBundle()
+  const ctx = fakeContext()
+  exports.apply(ctx)
+  const Row = ctx.registered.find((entry) => entry.options.name === 'sidebar.footer.action').Component
+
+  const wide = Row({ wide: true })
+  const wideRow = findByClass(wide, 'dsa-row')
+  assert.notEqual(wideRow, null, '应当渲染出 .dsa-row')
+  assert.equal(wideRow.props['data-status'], 'loading')
+  assert.equal(wideRow.props['data-rail'], 'false')
+  const texts = JSON.stringify(wide)
+  assert.ok(texts.includes('阿里云代金券'), '没取到快照时用默认标签')
+  assert.ok(texts.includes('dsa-label'))
+
+  const rail = Row({ wide: false })
+  const railRow = findByClass(rail, 'dsa-row')
+  assert.notEqual(railRow, null)
+  assert.equal(railRow.props['data-rail'], 'true')
+})
+
+test('ConfigPanel：内嵌模式渲染出面板与凭据说明（不联网）', async () => {
+  const { exports } = await loadBundle()
+  const ctx = fakeContext()
+  exports.apply(ctx)
+  const Section = ctx.registered.find((entry) => entry.options.name === 'settings.section').Component
+
+  // SettingsSection 返回的是「元素」，真正的组件在 type 上（假 React 不做渲染）。
+  const section = Section()
+  const panel = section.type(section.props)
+  const root = findByClass(panel, 'dsa-panel')
+  assert.notEqual(root, null, '面板根节点')
+  assert.equal(root.props['data-embedded'], 'true')
+  assert.equal(root.props.style, undefined, '内嵌模式不该自己定位')
+
+  const tree = JSON.stringify(panel)
+  assert.ok(tree.includes('阿里云代金券'), '标题')
+  assert.ok(tree.includes('侧边栏那一行的标签'), '标签输入框')
+  assert.ok(tree.includes('宿主查阿里云的间隔'), '间隔输入框')
+  assert.ok(tree.includes('立即刷新'))
+  assert.ok(tree.includes('凭据要写进 DSH 凭据库'), '凭据说明')
+})

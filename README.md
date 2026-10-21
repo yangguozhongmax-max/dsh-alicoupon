@@ -3,14 +3,15 @@
 在 [DeepSeek Harness](https://github.com/deepseek-ai)（DSH）的侧边栏底部，和 cost-meter 的余额行并排显示**阿里云代金券剩余额度**。
 
 ```
-千问学生券            ¥279.59        ← 本插件（点一下立即刷新，悬停看面值/张数/更新时间）
+千问学生券            ¥279.59        ← 本插件（点一下打开配置面板，悬停看面值/张数/更新时间）
 今日  ¥9.8254
 ━━━━━━━━━━━  峰时 · 1 小时 47 分后进入平价
 ```
 
 - 只用**只读**接口：阿里云 BSS `DescribeCoupon`（`business.aliyuncs.com`，`2023-09-30`，ACS3-HMAC-SHA256 签名）。
 - 凭据存在 DSH 凭据库里，**永远不回传给浏览器**；接口响应只有余额、面值、张数、到期日。
-- 宿主半边每 `refreshMinutes`（默认 1 分钟）重查一次；浏览器半边每 60 秒读一次宿主快照，页面重新可见 / 窗口聚焦时各读一次，点那行强制刷新。
+- 宿主半边每 `refreshMinutes`（默认 1 分钟）重查一次；浏览器半边每 60 秒读一次宿主快照，页面重新可见 / 窗口聚焦时各读一次。
+- 点那一行打开**配置面板**：改标签、改刷新间隔（落盘、立即生效）、立即刷新、看凭据到底缺哪一项。
 
 ## 它怎么工作
 
@@ -74,7 +75,11 @@ dsh plugin --profile web add github:yangguozhongmax-max/dsh-alicoupon
 
 ## 配置（可选）
 
-插件的加载行可以带配置；也可以在本 profile 的 `cordis.patch.yml` 里覆盖同一 `id`：
+三种改法，优先级从高到低：
+
+1. **配置面板**（点侧边栏那一行）：改完写到 `~/.dsh/storages/dsh-alicoupon/config.json`，**立即生效、不用重启**；
+2. 本 profile 的 `cordis.patch.yml`（覆盖同一 `id` 的行配置）；
+3. 插件的默认值。
 
 ```yaml
 - id: alicoupon
@@ -86,6 +91,18 @@ dsh plugin --profile web add github:yangguozhongmax-max/dsh-alicoupon
     accessKeySecret: ALIBABA_CLOUD_ACCESS_KEY_SECRET
     securityToken: ALIBABA_CLOUD_SECURITY_TOKEN
 ```
+
+```json
+// ~/.dsh/storages/dsh-alicoupon/config.json —— 面板写的就这两个字段
+{ "label": "千问学生券", "refreshMinutes": 1 }
+```
+
+面板同时会显示**凭据还缺哪一项**。凭据本身不能从浏览器半边改（客户端没有 `credentials.set`），
+只能写 `~/.dsh/.credentials.yaml` 的 `refs:` 或设成环境变量——这是 DSH 的边界，不是本插件的限制。
+路径可以用环境变量 `DSH_ALICOUPON_CONFIG` 顶掉（测试与多 profile 隔离用）。
+
+如果这个 profile 里 `@deepseek-ai/dsh-client-ui-settings` 是开着的，配置面板也会作为
+`settings.section` 出现在设置弹窗里；桌面 App 默认把它关了，所以那里只能从侧边栏那一行点开。
 
 ## 排错
 
@@ -106,8 +123,9 @@ node scripts/probe.mjs <AccessKeyId> <AccessKeySecret> [SecurityToken] [--raw] [
 | --- | --- |
 | 行显示「· 待配置」 | 凭据没读到：检查 `refs:` 键名、环境变量、AK 是否被删除 |
 | 行显示「· 查询失败」 | 悬停看具体原因：`InvalidAccessKeyId`（AK 错/已删）、`Forbidden`（没授权 `bss:DescribeCoupon`）、HTTP 4xx/5xx |
-| 数字不更新 | `refreshMinutes` 太大、或宿主没在跑（重启 App / 重载插件） |
+| 数字不更新 | 点那一行打开面板看「更新于」；interval 太大就调小；宿主定时器只在插件进程活着时跑 |
 | 路由 404 | 宿主半边没加载：检查包名是否在 `dsh.profile.bundles`、日志里有没有插件报错 |
+| 改了 `lib/index.js` 但行为没变 | **热重载不会重新 import 已经加载过的宿主模块**——必须重启 App（或重启 `dsh web`）；改客户端 `lib/client.js` 同样要重开界面（桌面 App 的界面走 `dsh-app://`，F5 不重载） |
 
 宿主日志：DSH 主进程 stdout；桌面 App 的渲染进程日志（只在启动失败时写）在 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\`。
 
@@ -119,6 +137,11 @@ node scripts/probe.mjs <AccessKeyId> <AccessKeySecret> [SecurityToken] [--raw] [
 | --- | --- | --- |
 | GET | `/plugins/dsh-alicoupon/state` | 当前快照（命中缓存不打阿里云） |
 | POST | `/plugins/dsh-alicoupon/refresh` | 强制刷新后返回 |
+| GET | `/plugins/dsh-alicoupon/config` | 生效配置 + 凭据是否就绪 + 落盘路径 |
+| POST | `/plugins/dsh-alicoupon/config` | `{"label":"…","refreshMinutes":n}`，落盘并立即生效；非法字段 400 |
+
+`state` / `refresh` 的响应里还带 `config`（生效配置）与 `diagnostics`（`clientHits` / `otherHits` 计数，
+用来判断浏览器那半边到底有没有在轮询）。
 
 响应示例：
 
@@ -142,9 +165,13 @@ node scripts/probe.mjs <AccessKeyId> <AccessKeySecret> [SecurityToken] [--raw] [
 ## 开发与测试
 
 ```bash
-node --test test/aliyun-coupon.test.mjs   # 纯函数单测（签名、翻页、错误映射、汇总）
+node --test test/aliyun-coupon.test.mjs test/config.test.mjs test/host.test.mjs
 node --check lib/index.js && node --check lib/client.js && node --check lib/aliyun-coupon.js
 ```
+
+三个测试文件都是零依赖、离线可跑的：`aliyun-coupon` 测签名/翻页/解析/汇总，`config` 测配置白名单，
+`host` 用**假的 cordis ctx** 驱动真实路由处理器（注册路由 → 无凭据不联网 → 读配置 → 写配置 → 落盘 → 当场生效 → 非法输入被拒）。
+`host` 测试全程不碰阿里云，所以 CI 里也安全。
 
 `lib/aliyun-coupon.js` 是零依赖的纯核心（签名 / 请求 / 解析 / 汇总），可以单独复用：
 
@@ -159,6 +186,9 @@ console.log(summarizeCoupons(result, { label: '阿里云代金券' }))
 
 - 宿主半边需要 DSH 的 Web 服务器（`ctx.webServer`）与凭据库（`ctx.credentials`），纯终端界面里插件会停在 pending。
 - `DescribeCoupon` 返回的券对象没有名字字段，所以「一张券 = 一行汇总」：把同一账号下所有可用券的剩余/面值加总，到期日取最近的那个。要挑特定的券，得按 `CouponId` 过滤（还没做）。
+- 这些路由和 DSH 的 Web 服务器一样**不带认证**（DSH 自己的设计：路由各自负责）。`/state` 只读，
+  `/config` 也只能改标签和刷新间隔（白名单校验），但如果你把 DSH 的端口暴露到局域网，任何能访问它的
+  本地网页都能改这两个字段、也能看到你的券余额。给它加一层守卫是本插件以后要做的事。
 - 只读，不会动任何阿里云资源。
 
 ## English quick start

@@ -21,10 +21,12 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       # 插件本体没有任何运行时依赖，所以不需要 npm install 就能跑测试。
+      # 显式列出文件名：Windows 的 shell 不展开 glob，`node --test test` 也不行。
       - name: Run unit tests
-        run: node --test test/aliyun-coupon.test.mjs
+        run: node --test test/aliyun-coupon.test.mjs test/config.test.mjs test/host.test.mjs test/client.test.mjs
       - name: Check the host and client entries parse
         run: |
           node --check lib/aliyun-coupon.js
+          node --check lib/debug.js
           node --check lib/index.js
           node --check lib/client.js
