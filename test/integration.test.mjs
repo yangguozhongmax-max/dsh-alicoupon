@@ -317,9 +317,9 @@ async function loadClient() {
   return { exports, react }
 }
 
-/** 假 cordis 客户端 ctx：只要 slots（effect 直接执行）。 */
+/** 假 cordis 客户端 ctx：只要 slots（effect 直接执行，inject 立即回调）。 */
 function clientContext(registered) {
-  return {
+  const ctx = {
     effect: (fn) => {
       const cleanup = fn()
       return typeof cleanup === 'function' ? cleanup : () => {}
@@ -332,6 +332,8 @@ function clientContext(registered) {
       },
     },
   }
+  ctx.inject = (_deps, callback) => callback(ctx)
+  return ctx
 }
 
 test('集成：那一行读的是真实宿主路由（没凭据时显示「待配置」）', async () => {

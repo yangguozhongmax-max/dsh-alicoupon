@@ -61,10 +61,12 @@ function findByClass(node, className) {
   return null
 }
 
-function fakeContext({ throwOn } = {}) {
+function fakeContext({ throwOn, deferSlots = false } = {}) {
   const registered = []
-  return {
+  const pending = []
+  const ctx = {
     registered,
+    pending,
     slots: {
       inject: (_name, callback) => callback(),
       register: (options, Component) => {
@@ -77,14 +79,25 @@ function fakeContext({ throwOn } = {}) {
       const dispose = fn()
       return typeof dispose === 'function' ? dispose : () => {}
     },
+    // cordis 的 ctx.inject：服务到位前不执行回调。deferSlots 用来模拟「slots 服务迟到」。
+    inject: (deps, callback) => {
+      if (deferSlots) {
+        pending.push(() => callback(ctx))
+        return
+      }
+      callback(ctx)
+    },
   }
+  return ctx
 }
 
-test('bundle 契约：id / inject / apply 都在', async () => {
+test('bundle 契约：id / apply 都在，且不把 slots 声明成强依赖', async () => {
   const { spec, exports } = await loadBundle()
   assert.equal(spec.id, 'dsh-alicoupon')
   assert.equal(exports.name, 'dsh-alicoupon')
-  assert.deepEqual(exports.inject, ['slots'])
+  // 强依赖 `slots` 会让 fiber 在启动审计时停在 loading（真实事故：web boot 拒绝启动）。
+  // 注册改为 apply 里的 ctx.inject(['slots'], ...)，插件自身始终 active。
+  assert.equal(exports.inject, undefined)
   assert.equal(typeof exports.apply, 'function')
 })
 
@@ -99,6 +112,19 @@ test('apply：注册侧边栏那一行（id/order/槽位都对）', async () => 
   const section = ctx.registered.find((entry) => entry.options.name === 'settings.section')
   assert.notEqual(section, undefined, '顺带注册 settings.section')
   assert.equal(section.options.label, '阿里云代金券')
+})
+
+test('slots 服务迟到：apply 不抛错，服务到位后再注册（启动审计不会看到 loading）', async () => {
+  const { exports } = await loadBundle()
+  const ctx = fakeContext({ deferSlots: true })
+  exports.apply(ctx)
+  assert.deepEqual(ctx.registered, [], '服务没到位时不应该注册')
+  assert.equal(ctx.pending.length, 1, '应当挂起一次 ctx.inject 回调')
+  ctx.pending[0]()
+  assert.deepEqual(
+    ctx.registered.map((entry) => entry.options.name),
+    ['sidebar.footer.action', 'settings.section'],
+  )
 })
 
 test('设置弹窗不可用时，注册失败不会带走侧边栏那一行', async () => {
