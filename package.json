@@ -27,9 +27,10 @@
     "node": ">=20.10"
   },
   "scripts": {
+    "doctor": "node scripts/doctor.mjs",
     "probe": "node scripts/probe.mjs",
-    "test": "node --test test/aliyun-coupon.test.mjs test/config.test.mjs test/host.test.mjs test/client.test.mjs test/integration.test.mjs",
-    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/aliyun-coupon.js && node --check lib/debug.js"
+    "test": "node --test test/aliyun-coupon.test.mjs test/config.test.mjs test/host.test.mjs test/client.test.mjs test/integration.test.mjs test/doctor.test.mjs",
+    "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/aliyun-coupon.js && node --check lib/debug.js && node --check scripts/doctor.mjs"
   },
   "dsh": {
     "bundle": {

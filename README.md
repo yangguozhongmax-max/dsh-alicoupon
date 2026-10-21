@@ -130,7 +130,18 @@ dsh plugin --profile web add github:yangguozhongmax-max/dsh-alicoupon
 
 ## 排错
 
-先不带 DSH 跑一次探针（同样的签名与解析代码）：
+先跑体检——它会看 profile 有没有挂上插件、文件全不全、凭据 ref 在不在，还能顺手问一次活着的路由：
+
+```bash
+node scripts/doctor.mjs                 # 桌面 App（desktop profile）
+node scripts/doctor.mjs --profile web   # 命令行界面
+node scripts/doctor.mjs --port 50989    # 再问一次宿主路由（端口看 GUI 地址）
+```
+
+它会明确告诉你「插件没挂进 node_modules」「bundles 里没有」「凭据库缺 AK」「路由 404（这个进程里宿主半边没加载）」
+这类结论，并且只读凭据、从不打印值。
+
+再不带 DSH 跑一次探针（同样的签名与解析代码）：
 
 ```bash
 node scripts/probe.mjs <AccessKeyId> <AccessKeySecret> [SecurityToken] [--raw] [--label 千问学生券]
@@ -193,8 +204,9 @@ node scripts/probe.mjs <AccessKeyId> <AccessKeySecret> [SecurityToken] [--raw] [
 ## 开发与测试
 
 ```bash
-npm test    # 32 个用例，全部离线、零依赖
+npm test    # 38 个用例，全部离线、零依赖
 npm run check
+npm run doctor
 ```
 
 测试文件都是零依赖、离线可跑的：`aliyun-coupon` 测签名/翻页/解析/汇总，`config` 测配置白名单，
