@@ -1,6 +1,6 @@
 {
   "name": "dsh-alicoupon",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "在 DeepSeek Harness 侧边栏显示阿里云代金券剩余额度（只读 DescribeCoupon）· Alibaba Cloud coupon balance row for DSH",
   "type": "module",
   "main": "lib/index.js",
