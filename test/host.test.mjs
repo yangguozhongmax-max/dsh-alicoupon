@@ -155,6 +155,24 @@ test('挂上路由后：没凭据也不联网，state 里带上生效配置', as
   assert.equal(state.diagnostics.clientHits, 1)
 })
 
+test('POST /debug：浏览器半边的信标落进 diagnostics.clientLog（桌面 App 里唯一的现场）', async () => {
+  const res = await call(
+    'POST',
+    `${ROUTE_PREFIX}/debug`,
+    JSON.stringify({ event: 'apply', detail: { slots: true, effect: 'function' }, at: '2026-10-21T12:00:00.000Z' }),
+  )
+  assert.equal(res.statusCode, 204)
+
+  const state = json(await call('GET', `${ROUTE_PREFIX}/state`))
+  const entry = state.diagnostics.clientLog.find((item) => item.event === 'apply')
+  assert.notEqual(entry, undefined, '应当记下浏览器半边的 apply 信标')
+  assert.deepEqual(entry.detail, { slots: true, effect: 'function' })
+  assert.equal(entry.at, '2026-10-21T12:00:00.000Z')
+
+  // 这条路由只收 POST：别的方法一律 405，免得被当成状态接口。
+  assert.equal((await call('GET', `${ROUTE_PREFIX}/debug`)).statusCode, 405)
+})
+
 test('GET /config：报出缺哪两个凭据、配置来源与落盘路径', async () => {
   const body = json(await call('GET', `${ROUTE_PREFIX}/config`))
   assert.equal(body.ok, true)

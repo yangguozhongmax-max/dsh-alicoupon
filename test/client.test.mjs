@@ -63,32 +63,33 @@ function findByClass(node, className) {
   return null
 }
 
-function fakeContext({ throwOn, deferSlots = false } = {}) {
+/** slots 服务（和真实的一样：register 返回 dispose；`throwOn` 用来模拟槽位不可用）。 */
+function makeSlots(registered, throwOn) {
+  return {
+    inject: (_name, callback) => callback(),
+    register: (options, Component) => {
+      if (throwOn !== undefined && options.name === throwOn) throw new Error(`slot ${options.name} 不可用`)
+      registered.push({ options, Component })
+      return () => {}
+    },
+  }
+}
+
+function fakeContext({ throwOn, noSlots = false } = {}) {
   const registered = []
-  const pending = []
   const ctx = {
     registered,
-    pending,
-    slots: {
-      inject: (_name, callback) => callback(),
-      register: (options, Component) => {
-        if (throwOn !== undefined && options.name === throwOn) throw new Error(`slot ${options.name} 不可用`)
-        registered.push({ options, Component })
-        return () => {}
-      },
-    },
+    slots: makeSlots(registered, throwOn),
     effect: (fn, _label) => {
       const dispose = fn()
       return typeof dispose === 'function' ? dispose : () => {}
     },
-    // cordis 的 ctx.inject：服务到位前不执行回调。deferSlots 用来模拟「slots 服务迟到」。
-    inject: (deps, callback) => {
-      if (deferSlots) {
-        pending.push(() => callback(ctx))
-        return
-      }
-      callback(ctx)
-    },
+    // 有些运行期只有 ctx.get('slots') 这一条路，两条都要覆盖。
+    get: (name) => (name === 'slots' ? ctx.slots : undefined),
+  }
+  if (noSlots) {
+    delete ctx.slots
+    ctx.get = () => undefined
   }
   return ctx
 }
@@ -98,7 +99,6 @@ test('bundle 契约：id / apply 都在，且不把 slots 声明成强依赖', a
   assert.equal(spec.id, 'dsh-alicoupon')
   assert.equal(exports.name, 'dsh-alicoupon')
   // 强依赖 `slots` 会让 fiber 在启动审计时停在 loading（真实事故：web boot 拒绝启动）。
-  // 注册改为 apply 里的 ctx.inject(['slots'], ...)，插件自身始终 active。
   assert.equal(exports.inject, undefined)
   assert.equal(typeof exports.apply, 'function')
 })
@@ -119,13 +119,15 @@ test('apply：只注册侧边栏那一行（id/order 都对，不多注册槽位
   )
 })
 
-test('slots 服务迟到：apply 不抛错，服务到位后再注册（启动审计不会看到 loading）', async () => {
+test('slots 服务迟到：apply 立刻返回 undefined，服务到位后自己补上注册', async () => {
   const { exports } = await loadBundle()
-  const ctx = fakeContext({ deferSlots: true })
-  assert.equal(exports.apply(ctx), undefined)
+  const ctx = fakeContext({ noSlots: true })
+  assert.equal(exports.apply(ctx), undefined, '服务没到位也不能抛错、不能返回 thenable')
   assert.deepEqual(ctx.registered, [], '服务没到位时不应该注册')
-  assert.equal(ctx.pending.length, 1, '应当挂起一次 ctx.inject 回调')
-  ctx.pending[0]()
+
+  // 服务到位（真实环境里就是 slots 服务被 provide 的那一刻）→ 重试定时器补上注册。
+  ctx.slots = makeSlots(ctx.registered)
+  await new Promise((resolve) => setTimeout(resolve, 400))
   assert.deepEqual(
     ctx.registered.map((entry) => entry.options.name),
     ['sidebar.footer.action'],
