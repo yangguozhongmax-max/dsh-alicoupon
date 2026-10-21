@@ -28,7 +28,7 @@
   },
   "scripts": {
     "probe": "node scripts/probe.mjs",
-    "test": "node --test test/aliyun-coupon.test.mjs test/config.test.mjs test/host.test.mjs test/client.test.mjs",
+    "test": "node --test test/aliyun-coupon.test.mjs test/config.test.mjs test/host.test.mjs test/client.test.mjs test/integration.test.mjs",
     "check": "node --check lib/index.js && node --check lib/client.js && node --check lib/aliyun-coupon.js && node --check lib/debug.js"
   },
   "dsh": {

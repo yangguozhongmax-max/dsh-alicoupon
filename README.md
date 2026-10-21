@@ -193,15 +193,20 @@ node scripts/probe.mjs <AccessKeyId> <AccessKeySecret> [SecurityToken] [--raw] [
 ## 开发与测试
 
 ```bash
-node --test test/aliyun-coupon.test.mjs test/config.test.mjs test/host.test.mjs
-node --check lib/index.js && node --check lib/client.js && node --check lib/aliyun-coupon.js
+npm test    # 32 个用例，全部离线、零依赖
+npm run check
 ```
 
-三个测试文件都是零依赖、离线可跑的：`aliyun-coupon` 测签名/翻页/解析/汇总，`config` 测配置白名单，
+测试文件都是零依赖、离线可跑的：`aliyun-coupon` 测签名/翻页/解析/汇总，`config` 测配置白名单，
 `host` 用**假的 cordis ctx** 驱动真实路由处理器（注册路由 → 无凭据不联网 → 读配置 → 写配置 → 落盘 → 当场生效 → 非法输入被拒；
 凭据路由用假凭据库 + 假 fetch：写入后当场查到券、`clear` 后回到未配置、非法输入一个字节都不写），
 `client` 用**假的 React** 渲染那一行与配置面板（验证 bundle 契约、槽位注册、面板字段）。
 `host` / `client` 都不碰阿里云、不需要浏览器，所以 CI 里也安全。
+
+`integration` 是两端合起来的端到端测试：**真实宿主路由 + 真实客户端 bundle**，中间用内存桥接
+（假 `fetch` → 真实 handler → 假凭据库 → 假阿里云），跑完「面板读 `/config` → 填 AK/Secret → 保存 →
+宿主落库并立刻查一次 → 面板回显 → 那一行显示 `¥286.18`」整条链路。单测证明不了两半对得上——
+`fix: answer CORS preflight` 那个 bug（客户端带 JSON 的 POST 会先发 OPTIONS，而宿主回 405）就是这类问题。
 
 `scripts/link-into-profile.mjs` 也属于可跑的脚本：`--dry` 不写盘，可以直接拿来检查挂载状态。
 
